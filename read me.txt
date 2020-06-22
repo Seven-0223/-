@@ -1,0 +1,122 @@
+1.把springcloud实现dubbo的生产者和消费者调用
+2.预习eureka，明天我会不定时点名提问，如果没有回答上来抄5遍
+
+20191109-homework:
+    1.把今天的eureka整明白(把项目完善)
+    2.直接想办法集成eureka的集群版
+    3.预习ribbon(负载均衡)
+        ribbon依赖eureka实现负载均衡
+        ribbon不依赖eureka实现负载均衡
+        ribbon的负载均衡算法源码(我要自己写)(github上直接搜ribbon-->loadbalance包下(轮询，随机))
+
+
+ribbon的源码分析:
+    IRule:接口
+        public Server choose(Object key);选择可用的服务
+    ILoadBalancer:接口(和标记，添加，选择，获取服务相关的接口)
+    AbstractLoadBalancer(抽象类) ---> 实现了ILoadBalancer接口
+    AbstractLoadBalancerRule(抽象类) ---> 实现了IRule接口
+        有一个属性:ILoadBalance-->getter/setter方法
+    RandomRule(最终实现负载均衡算法地方) ---> 继承了AbstractLoadBalancerRule抽象类
+
+
+Feign:
+    负载均衡(客户端层面的负载均衡)
+    !!!ribbon和feign的区别:
+       在真实的开发环境中只会使用到feign，并不会使用ribbon，其实feign中负载均衡的实现是基于ribbon的，也就是说feign集成的有ribbon
+       feign其实真正的功能并不只局限于负载均衡，feign有一个非常强大的功能是远程调用，feign中负载均衡实现是ribbon做的
+       ribbon是如何实现consumer调用provider？
+            RestTemplate--->@LoadBalance(开启负载均衡)--->如果不使用默认的轮询算法则还需要自己自定义算法--->在controller中
+            通过restTemplate来模拟http的请求--->最后把请求发送给provider(controller调用controller)
+            其实违反了MVC的规则
+       MVC:controller--->调用service--->调用mapper--->使用model
+       feign实现:
+            consumer:
+                controller--->service层(接口)--->映射provider中的controller
+            provider:
+                controller-->调用service-->调用mapper
+
+
+当使用feign做负载均衡的时候:
+    consumer:
+        和客户端打交道,也就是说只提供页面的展示，所有的数据支撑都来源于provider(没有必须要数据源)
+        不需要配置数据源但是mybatis的jar，直接报错，也就是必须要配
+    provider:
+        和数据库打交道，也就是说只做数据持久层，所有的页面都是consumer决定，只提供数据支持
+    consumer中的controller-->service接口(service项目中)
+        -->consumer必须要依赖于service层-->依赖于mapper
+        也就是说consumer必须要配数据源(没有意义)
+    consumer就不会使用service,再创建一个项目(只做service的接口(API))
+    consumer只需要依赖api项目，因为api中有返回值类型，所以必须要依赖于model
+    因为使用的是feign，所以按照规定必须要添加feign的jar包，所以一般会把jar包添加到api项目中
+
+    除了consul之外，springcloud的所有组件都必须要eureka，因为consul也是注册中心
+    是否需要eureka的jar包？
+        必须要有
+
+!!!!!!!!hystrix:(非常非常重要，100%不能保证项目中不出错，就必须要针对错误实现解决方案)
+    断容器
+    断容器其实类似于保险丝，当家里的电器短路，保险丝就会烧断，整个电路跳闸，保护了整个电路安全
+    断容器是每个项目中都必须有的，假设突然有一个服务器宕机，其他的consumer就无法调用这个宕机的服务，这些consumer就会一直处于等待状态(直到连接超时)
+    consumer一旦出现连接超时，反馈客户端就会出现异常信息，断容器就会生效
+
+    服务的扇出
+        有一个服务A
+            A需要分别调用B和C以及D，当A成功获取到BCD的值之后才算服务A成功调用(只要其中有一个服务没有获取到则调用失败)，
+            但是B调用E，C调用F和G，D调用H,I,J，这种调用模式就称之为扇出
+
+    雪崩效应
+        在正常的服务扇出的情况下，突然有一条线断了，其他的所有线路都在等待这一条线(直到连接超时)，在还没有出现连接超时的时候突然来了10万的并发
+        最终全部挤压在断的那一条线路上，该线路直接宕机，直接会导致A宕机，A一旦宕机整个集群都处于瘫痪状态，这种叫做服务的雪崩效应
+
+    什么是容错:
+        当项目出现异常的时候，仍然可以正常的运行，并且客户端可以获取到一个能接受的结果就叫做项目的容错(try/catch)
+
+    hytrix:(面试题)
+        五大核心：
+          1.熔断
+            当服务器调用的时候出现故障，项目就会出现严重的异常(500)，熔断就是解决了这个问题，调用后备方法，返回客户端可以接受的结果
+          2.服务的降级
+            当服务器的压力过大的时候，为了支撑核心业务的正常运行，先把无关紧要的服务停止，让服务器的所有资源供核心业务使用，当核心业务性能逐步稳定之后，再重新其他额服务，这种模式就称之为服务的降级
+          3.服务的隔离(自己百度服务的隔离)
+                线程池隔离
+                信号量隔离
+                当服务长时间不响应，就会连接超时，服务的隔离就是解决连接超时的问题
+
+          4.服务的限流(决绝高并发)
+                当服务器压力过大的时候，也就是说负载比较高的时候，就不能再继续支撑客户端的访问，假设还有100个请求服务器就会宕机
+                规定只能再接收20个，其他的80个请求全部走熔断
+
+          5.灰色发布(灰色部署)
+            自己百度吧
+
+    普通熔断的弊端:
+        1.如果controller中的方法过多，每一个方法就必须对应一个熔断方法,如果controller过多，则整个项目就会过大(启动的时候编译的方法就会变多，并且运行的速度就会降低)
+        2.你觉得在consumer调用provider的时候，只会在provider抛异常么？
+            consumer的controller调用service接口的时候抛异常
+            service接口调用provider的controller也可能抛异常
+            把熔断的处理放在service层解决，也可以对每一个熔断方法进行封装
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
